@@ -19,7 +19,7 @@ from core.qpay import create_invoice
 
 from flask import Flask, request, jsonify
 
-from bot.handlers import handle_messaging, send_text_message
+from bot.handlers import handle_message, handle_postback
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
@@ -35,29 +35,31 @@ def init_db():
     _init_db()
 
 
-@app.route("/webhook", methods=["GET"])
-def verify_webhook():
-    mode = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        return challenge, 200
-    return "Forbidden", 403
-
-
-@app.route("/webhook", methods=["POST"])
+@app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    data = request.get_json(force=True)
-    try:
-        handle_messaging(data)
-    except Exception as exc:
-        logger.exception("Webhook handling failed: %s", exc)
+    if request.method == 'GET':
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        if token == VERIFY_TOKEN:
+            return challenge
+        return "Verification failed", 403
+
+    data = request.get_json()
+    for entry in data.get("entry", []):
+        for event in entry.get("messaging", []):
+            sender_id = event.get("sender", {}).get("id")
+            if not sender_id:
+                continue
+            if "message" in event and "text" in event["message"]:
+                handle_message(sender_id, event["message"]["text"])
+            elif "postback" in event:
+                handle_postback(sender_id, event["postback"]["payload"])
     return "OK", 200
 
 
-@app.route("/", methods=["GET"])
-def health_check():
-    return "ok", 200
+@app.route('/')
+def health():
+    return "FB Planner v2 running ✓"
 
 
 def _start_scheduler():

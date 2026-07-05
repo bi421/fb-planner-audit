@@ -7,7 +7,9 @@ import requests as req
 
 from core.db import get_user, upsert_user, get_user_subscription
 from core.audit import check_text_risk, perform_user_audit, generate_plan
+from core.precheck import scan_text, record_precheck_usage
 from core.qpay import create_invoice
+from core.config import get
 from bot.templates import (
     WELCOME_CAROUSEL,
     QUICK_REPLIES_AUDIT,
@@ -16,7 +18,6 @@ from bot.templates import (
     PAYMENT_TEMPLATE,
     ERROR_TEMPLATE,
 )
-from core.config import get
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,12 @@ PAGE_TOKEN = get("fb.page_token", "")
 VERIFY_TOKEN = get("fb.verify_token", "fbplanner_verify")
 ADMIN_TELEGRAM_ID = get("admin.telegram_user_id", 0)
 ADMIN_TELEGRAM_TOKEN = get("admin.telegram_bot_token", "")
+
+QUICK_REPLIES = [
+    {"content_type": "text", "title": "Шалгах", "payload": "AUDIT"},
+    {"content_type": "text", "title": "Төлбөр", "payload": "PAY"},
+    {"content_type": "text", "title": "Тусламж", "payload": "HELP"},
+]
 
 
 def _call_send_api(recipient_id: str, payload: Dict):
@@ -37,6 +44,36 @@ def _call_send_api(recipient_id: str, payload: Dict):
         resp.raise_for_status()
     except Exception as exc:
         logger.exception("Send API failed: %s", exc)
+
+
+def send_message(recipient_id: str, text: str):
+    """Send a plain text message to a Messenger recipient."""
+    _call_send_api(recipient_id, {"text": text})
+
+
+def handle_message(sender_id: str, text: str):
+    """Handle a plain text message from a user."""
+    result = scan_text(text)
+    risk_score = result.get("risk_score", 0)
+    reasons = result.get("reasons", [])
+    if risk_score > 70:
+        reasons_str = ", ".join([str(r) for r in reasons]) if reasons else "Тодорхойгүй"
+        send_message(sender_id, f"⚠️ Эрсдэлтэй үг илэрлээ: {reasons_str}")
+    elif risk_score < 30:
+        send_message(sender_id, "✅ Зөв, нийтлэх боломжтой")
+    else:
+        send_message(sender_id, f"⚠️ Эрсдэлтэй байдал: {risk_score}/100")
+
+    record_precheck_usage(sender_id)
+
+
+def handle_postback(sender_id: str, payload: str):
+    """Handle a postback payload from a user."""
+    if payload == "PAY":
+        invoice = create_invoice(sender_id, "pro")
+        send_message(sender_id, f"Нэхэмжлэх: {invoice['invoice_id']}\nДүн: {invoice['amount']} {invoice['currency']}")
+    else:
+        send_message(sender_id, "Тусламж хүсэлт хүлээгдэж байна.")
 
 
 
