@@ -1,0 +1,20 @@
+app:
+  name: fb-planner-v2
+  env: dev
+
+fb:
+  verify_token: fbplanner_verify
+  app_secret: ""
+  page_id: ""
+  page_token: ""
+  webhook_url: ""
+
+admin:
+  telegram_user_id: 0
+  telegram_bot_token: ""
+
+scheduler:
+  interval_minutes: 10
+
+storage:
+  db_path: data/app.db
