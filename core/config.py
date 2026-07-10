@@ -1,31 +1,41 @@
-"""Configuration loader for fb-planner-v2."""
+"""Configuration loader for fb-planner-audit."""
+from __future__ import annotations
+
 import os
 import logging
+from typing import Any, Optional
 
 import yaml
 
+from .models import Settings
+
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CONFIG_PATH = os.path.join(_BASE_DIR, "config.yaml")
+_settings: Optional[Settings] = None
 
-_config = None
 
-
-def load_config():
+def load_config() -> dict[str, Any]:
     """Load and return the YAML configuration as a dict."""
-    global _config
-    if _config is not None:
-        return _config
-    if not os.path.exists(CONFIG_PATH):
-        raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
-    with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-        _config = yaml.safe_load(fh)
-    logger.info("Config loaded from %s", CONFIG_PATH)
-    return _config
+    if not os.path.exists(_CONFIG_PATH):
+        raise FileNotFoundError(f"Config file not found: {_CONFIG_PATH}")
+    with open(_CONFIG_PATH, "r", encoding="utf-8") as fh:
+        config = yaml.safe_load(fh)
+    logger.info("Config loaded from %s", _CONFIG_PATH)
+    return config
 
 
-def get(key, default=None):
+def get_settings() -> Settings:
+    """Return parsed Settings model (cached)."""
+    global _settings
+    if _settings is None:
+        raw = load_config()
+        _settings = Settings.model_validate(raw)
+    return _settings
+
+
+def get(key: str, default: Any = None) -> Any:
     """Get a dot-notation config value, e.g. get('fb.verify_token')."""
     cfg = load_config()
     parts = key.split(".")

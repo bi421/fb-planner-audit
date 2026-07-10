@@ -1,2 +1,2 @@
-"""fb-planner-v2 core package."""
+"""fb-planner-audit core package."""
 

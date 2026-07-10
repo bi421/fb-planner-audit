@@ -1,23 +1,26 @@
+"""Text precheck and risky-word scanning for fb-planner-audit."""
+from __future__ import annotations
+
 import json
 import os
 import re
 import sqlite3
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def _db_path() -> str:
-    base_dir = os.path.dirname(os.path.dirname(__file__))
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_dir, "data", "app.db")
 
 
-def _conn():
+def _conn() -> sqlite3.Connection:
     con = sqlite3.connect(_db_path())
     con.row_factory = sqlite3.Row
     return con
 
 
-def _ensure_usage_table():
+def _ensure_usage_table() -> None:
     with _conn() as con:
         con.execute(
             """
@@ -35,7 +38,7 @@ def _ensure_usage_table():
 
 
 def _load_risky_words() -> Dict[str, List[str]]:
-    base_dir = os.path.dirname(os.path.dirname(__file__))
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     json_path = os.path.join(base_dir, "data", "risky_words.json")
 
     with open(json_path, "r", encoding="utf-8") as f:
@@ -89,7 +92,8 @@ def _is_negation_token(tok: str) -> bool:
     return tok_norm in set(_normalize_text(x) for x in _NEGATIONS)
 
 
-def scan_text(text: str) -> Dict[str, object]:
+def scan_text(text: str) -> Dict[str, Any]:
+    """Scan text for risky words and return risk assessment."""
     normalized = _normalize_text(text)
     if not normalized:
         return {"risk_score": 0, "reasons": [], "status": "ok"}
@@ -142,6 +146,7 @@ def scan_text(text: str) -> Dict[str, object]:
 
 
 def get_user_quota(user_id: str) -> int:
+    """Return remaining precheck quota for user."""
     _ensure_usage_table()
 
     with _conn() as con:
@@ -153,7 +158,7 @@ def get_user_quota(user_id: str) -> int:
     if sub and sub["expires_at"]:
         try:
             expires_at = datetime.fromisoformat(sub["expires_at"])
-            if datetime.utcnow() < expires_at:
+            if datetime.now(timezone.utc) < expires_at:
                 return 1_000_000
         except Exception:
             pass
@@ -169,7 +174,7 @@ def get_user_quota(user_id: str) -> int:
     return remaining
 
 
-def _write_usage(user_id: str, plan: str, action: str, usage_type: str, meta: Optional[dict] = None):
+def _write_usage(user_id: str, plan: str, action: str, usage_type: str, meta: Optional[dict] = None) -> None:
     _ensure_usage_table()
 
     meta_json = json.dumps(meta or {}, ensure_ascii=False)
@@ -180,11 +185,13 @@ def _write_usage(user_id: str, plan: str, action: str, usage_type: str, meta: Op
         )
 
 
-def record_precheck_usage(user_id: str, plan: str = "", meta: Optional[dict] = None):
+def record_precheck_usage(user_id: str, plan: str = "", meta: Optional[dict] = None) -> None:
+    """Record a precheck usage event."""
     _write_usage(user_id=user_id, plan=plan, action="scan_text", usage_type="precheck", meta=meta)
 
 
-def check_quota_and_scan(user_id: str, text: str) -> Dict[str, object]:
+def check_quota_and_scan(user_id: str, text: str) -> Dict[str, Any]:
+    """Check quota and scan text if allowed."""
     quota = get_user_quota(user_id)
     if quota <= 0:
         return {"status": "paid_required", "message": "Төлбөр төлнө үү"}

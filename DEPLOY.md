@@ -5,8 +5,8 @@
 
 2. Go to https://dashboard.render.com/web/new
    - Select "Web Service"
-   - Connect your GitHub repo: fb-planner-v2
-   - Name: fb-planner-v2
+    - Connect your GitHub repo: fb-planner-audit
+     - Name: fb-planner-audit
    - Runtime: Python 3
    - Build Command: pip install -r requirements.txt
    - Start Command: python run.py
@@ -19,7 +19,7 @@
 
 5. Set Facebook/Meta Webhook URL:
    https://your-app-name.onrender.com/webhook
-   Verify Token: fbplanner_verify
+   Verify Token: fbplanneraudit_verify
 
 6. Test health endpoint:
    https://your-app-name.onrender.com/

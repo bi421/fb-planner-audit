@@ -1,7 +1,7 @@
-"""Messenger templates for fb-planner-v2."""
-from typing import List, Dict
+"""Messenger templates for fb-planner-audit."""
+from typing import Any, Dict, List
 
-WELCOME_CAROUSEL = {
+WELCOME_CAROUSEL: Dict[str, Any] = {
     "attachment": {
         "type": "template",
         "payload": {
@@ -27,13 +27,13 @@ WELCOME_CAROUSEL = {
     }
 }
 
-QUICK_REPLIES_AUDIT = [
+QUICK_REPLIES_AUDIT: List[Dict[str, Any]] = [
     {"content_type": "text", "title": "Болсон аудит", "payload": "audit_yes"},
     {"content_type": "text", "title": "Шинэ аудит", "payload": "audit_new"},
     {"content_type": "text", "title": "Төлбөр", "payload": "PAY"},
 ]
 
-AUDIT_RESULT_TEMPLATE = {
+AUDIT_RESULT_TEMPLATE: Dict[str, Any] = {
     "attachment": {
         "type": "template",
         "payload": {
@@ -49,7 +49,7 @@ AUDIT_RESULT_TEMPLATE = {
     }
 }
 
-PLAN_RESULT_TEMPLATE = {
+PLAN_RESULT_TEMPLATE: Dict[str, Any] = {
     "attachment": {
         "type": "template",
         "payload": {
@@ -65,7 +65,7 @@ PLAN_RESULT_TEMPLATE = {
     }
 }
 
-PAYMENT_TEMPLATE = {
+PAYMENT_TEMPLATE: Dict[str, Any] = {
     "attachment": {
         "type": "template",
         "payload": {
@@ -81,6 +81,6 @@ PAYMENT_TEMPLATE = {
     }
 }
 
-ERROR_TEMPLATE = {
+ERROR_TEMPLATE: Dict[str, Any] = {
     "text": "Уучлаарай, алдаа гарлаа. Дахин оролдоно уу."
 }

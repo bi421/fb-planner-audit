@@ -1,1 +1,1 @@
-"""fb-planner-v2 bot package."""
+"""fb-planner-audit bot package."""

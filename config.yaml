@@ -1,9 +1,9 @@
 app:
-  name: fb-planner-v2
+  name: fb-planner-audit
   env: dev
 
 fb:
-  verify_token: fbplanner_verify
+  verify_token: fbplanneraudit_verify
   app_secret: ""
   page_id: ""
   page_token: ""
