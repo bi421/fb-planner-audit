@@ -35,13 +35,43 @@ def get_settings() -> Settings:
     return _settings
 
 
-def get(key: str, default: Any = None) -> Any:
-    """Get a dot-notation config value, e.g. get('fb.verify_token')."""
+def get_env_or_config(key: str, default: Any = None) -> Any:
+    """Resolve a config key with environment variable priority.
+
+    Priority order:
+      1) os.environ[KEY] where KEY is a best-effort conversion of dot-keys:
+         - e.g. 'fb.app_secret' -> 'FB_APP_SECRET'
+      2) os.environ[key]
+      3) value from config.yaml at dot-path
+      4) default
+    """
+    # 1) try uppercased underscore variant for Render env var conventions
+    env_key_1 = key.upper().replace(".", "_")
+    val = os.getenv(env_key_1)
+    if val is not None and val != "":
+        return val
+
+    # 2) try direct match
+    val = os.getenv(key)
+    if val is not None and val != "":
+        return val
+
+    # 3) fall back to YAML
     cfg = load_config()
     parts = key.split(".")
-    cur = cfg
+    cur: Any = cfg
     for p in parts:
         cur = cur.get(p) if isinstance(cur, dict) else None
         if cur is None:
             return default
+
     return cur
+
+
+def get(key: str, default: Any = None) -> Any:
+    """Get a dot-notation config value, e.g. get('fb.verify_token').
+
+    Environment variables take priority over config.yaml.
+    """
+    return get_env_or_config(key, default)
+

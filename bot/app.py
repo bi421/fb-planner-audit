@@ -10,12 +10,27 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from core.config import get
 from core.audit import perform_user_audit
+from core.brain.routes import brain_bp
 
 from flask import Flask, request, jsonify
 
-from bot.handlers import handle_message, handle_postback
-
 logger = logging.getLogger(__name__)
+
+
+# Handlers may depend on optional modules (e.g. templates). Do not crash the
+# whole service if handlers can't be imported; Render health checks must still
+# return 200.
+try:
+    from bot.handlers import handle_message, handle_postback
+except ImportError as exc:  # pragma: no cover
+    logger.warning("bot.handlers import failed (%s). Webhook message handling disabled.", exc)
+
+    def handle_message(*a, **k):
+        return {"ok": False, "error": "handlers not loaded"}
+
+    def handle_postback(*a, **k):
+        return {"ok": False, "error": "handlers not loaded"}
+
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -23,6 +38,18 @@ if ROOT not in sys.path:
 
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
+
+# Optional CORS support (useful when calling /brain/* from other domains).
+try:
+    from flask_cors import CORS
+
+    CORS(app, resources={r"/brain/*": {"origins": "*"}})
+except ImportError:  # pragma: no cover
+    pass
+
+app.register_blueprint(brain_bp)
+
+
 
 VERIFY_TOKEN: str = get("fb.verify_token", "fbplanneraudit_verify")
 ADMIN_TELEGRAM_ID: int = get("admin.telegram_user_id", 0)
