@@ -1,9 +1,11 @@
 services:
   - type: web
+    plan: free
     name: fb-planner-audit
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python run.py
+    healthCheckPath: /brain/health
     envVars:
       - key: META_TOKEN
         sync: false
@@ -15,3 +17,4 @@ services:
         value: webhook
       - key: PORT
         value: 10000
+
