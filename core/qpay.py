@@ -98,7 +98,7 @@ def create_invoice(amount: int, description: str, *, user_id: str | None = None,
         "invoice_receiver_code": "terminal",
         "invoice_description": description.strip()[:255],
         "amount": int(amount),
-        "callback_url": callback_url or os.getenv("QPAY_CALLBACK_URL", ""),
+        "callback_url": callback_url or os.getenv("QPAY_CALLBACK_URL", "").strip(),
     }
     result = _api_post("invoice", payload)
     invoice_id = result.get("invoice_id")
