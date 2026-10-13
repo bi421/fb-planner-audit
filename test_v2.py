@@ -125,6 +125,28 @@ class TestQPay:
         assert verify_webhook(payload, "invalid", secret="test-secret") is False
 
 
+class TestRevenueReadiness:
+    def test_dictionary_has_more_than_300_structured_entries(self) -> None:
+        entries = _load_risky_words()
+        assert len(entries) > 300
+        assert all({"word", "lang", "severity", "policy_link", "suggestion"} <= set(x) for x in entries)
+
+    def test_structured_audit_detects_risky_claim(self) -> None:
+        from core.audit import audit_creative
+        report = audit_creative("100% баталгаатай ашиг")
+        assert report["risk_level"] in {"SAFE", "WARNING", "DANGER"}
+        assert 0 <= report["score"] <= 100
+        assert isinstance(report["failed_rules"], list)
+        assert "баталгаатай" in report["fixed_version_of_copy"].lower() or report["failed_rules"]
+
+    def test_audit_detects_caps_emoji_and_before_after(self) -> None:
+        from core.audit import audit_creative
+        report = audit_creative("BEFORE AND AFTER!!!! 🚀🔥💥🎉🎯💯🚀🔥")
+        rules = {item["rule"] for item in report["failed_rules"]}
+        assert "before_after_claim" in rules
+        assert "emoji_spam" in rules
+
+
 class TestModels:
     def test_settings_defaults(self) -> None:
         settings = Settings()
