@@ -201,7 +201,13 @@ def billing_check(invoice_id: str) -> Any:
     try:
         payment = check_payment(invoice_id)
         if payment["paid"]:
-            return jsonify({"status": "processing", "message": "Төлбөр баталгаажсан; эрх шинэчлэгдэж байна. Вебхүүк хүлээн авна уу."})
+            from core.db import mark_invoice_paid
+            from core.qpay import activate_subscription
+            paid = mark_invoice_paid(invoice_id)
+            if paid:
+                activate_subscription(paid["user_id"], paid["plan"])
+                _notify_owner_payment(paid)
+            return jsonify({"status": "paid"})
         return jsonify({"status": "pending"})
     except Exception:
         logger.exception("QPay payment check failed")
