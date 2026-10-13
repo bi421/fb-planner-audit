@@ -135,3 +135,72 @@ def perform_user_audit(psid: str, url: str = "") -> Dict[str, Any]:
         issues_json=json.dumps(result["issues"]),
     )
     return result
+
+
+def audit_creative(text: str, image_path: str | None = None) -> Dict[str, Any]:
+    """Produce a heuristic creative audit; never claim guaranteed Meta approval."""
+    import re
+
+    source = text or ""
+    findings = []
+    fixed = source
+    scan = scan_text(source) if scan_text else {"risk_score": 0, "found_words": [], "reasons": []}
+    for item in scan.get("found_words", []):
+        findings.append({
+            "rule": "risky_claim",
+            "severity": item.get("severity", "medium"),
+            "matched_text": item.get("word", ""),
+            "suggestion": item.get("suggestion", "Use specific, substantiated wording."),
+            "policy_link": item.get("policy_link", "https://transparency.meta.com/policies/ad-standards/"),
+        })
+        term = str(item.get("word", ""))
+        suggestion = str(item.get("suggestion", ""))
+        if term and suggestion:
+            fixed = re.sub(re.escape(term), suggestion, fixed, flags=re.IGNORECASE)
+
+    if len(source) > 2200:
+        findings.append({"rule": "text_length", "severity": "medium", "matched_text": str(len(source)),
+                         "suggestion": "Shorten the copy and put the main offer first."})
+    letters = [ch for ch in source if ch.isalpha()]
+    if len(letters) >= 12 and sum(ch.isupper() for ch in letters) / len(letters) > 0.35:
+        findings.append({"rule": "excessive_caps", "severity": "medium", "suggestion": "Use sentence case and reserve capitals for short headings."})
+    emoji_count = len(re.findall(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", source))
+    if emoji_count >= 8 or (len(source) > 0 and emoji_count / max(1, len(source)) > 0.12):
+        findings.append({"rule": "emoji_spam", "severity": "medium", "suggestion": "Reduce emojis and keep the call to action readable."})
+    if re.search(r"before\s+and\s+after|өмнө\s+ба\s+дараа", source, re.IGNORECASE):
+        findings.append({"rule": "before_after_claim", "severity": "high",
+                         "suggestion": "Avoid before/after framing, especially for personal attributes or health/weight outcomes.",
+                         "policy_link": "https://transparency.meta.com/policies/ad-standards/"})
+
+    ocr = {"available": False, "text": "", "dense_text_warning": False, "note": "OCR not run"}
+    if image_path:
+        try:
+            from PIL import Image
+            import pytesseract
+            with Image.open(image_path) as image:
+                image_text = pytesseract.image_to_string(image)
+                ocr = {
+                    "available": True,
+                    "text": image_text[:5000],
+                    "dense_text_warning": len(image_text.strip()) > 500,
+                    "note": "Text density is a review heuristic; Meta's former fixed 20% text rule is not treated as a current ban.",
+                }
+                if ocr["dense_text_warning"]:
+                    findings.append({"rule": "image_text_density", "severity": "medium",
+                                     "suggestion": "Review whether the image is overly text-heavy; keep key text concise."})
+        except (ImportError, OSError, RuntimeError) as exc:
+            ocr = {"available": False, "text": "", "dense_text_warning": False,
+                   "note": f"OCR unavailable: {type(exc).__name__}"}
+
+    high = sum(1 for x in findings if x.get("severity") == "high")
+    medium = sum(1 for x in findings if x.get("severity") != "high")
+    score = max(0, min(100, int(scan.get("risk_score", 0)) + high * 18 + medium * 8))
+    risk_level = "DANGER" if score >= 60 or high >= 2 else "WARNING" if score >= 20 or findings else "SAFE"
+    return {
+        "score": score,
+        "risk_level": risk_level,
+        "failed_rules": findings,
+        "fixed_version_of_copy": fixed,
+        "ocr": ocr,
+        "disclaimer": "Heuristic pre-check only. It cannot guarantee Meta approval or prevent account restrictions.",
+    }
