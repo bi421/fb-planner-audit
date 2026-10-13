@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="mn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>QPay төлбөр</title>
+<style>body{font-family:system-ui,sans-serif;max-width:720px;margin:auto;padding:24px;color:#172033}.card{border:1px solid #dbe2ea;border-radius:14px;padding:24px}.qr{max-width:260px;width:100%}a,button{display:inline-block;margin:8px 6px 8px 0;padding:10px 14px;border-radius:8px;background:#1458c8;color:white;text-decoration:none;border:0;cursor:pointer}.error{color:#a32626}</style></head><body>
+<div class="card"><h1>QPay төлбөр</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if invoice %}
+<p>Багц: <strong>{{ plan }}</strong></p><p>Төлөх дүн: <strong>{{ invoice.amount }}₮</strong></p>
+{% if invoice.qr_image %}<img class="qr" alt="QPay QR" src="data:image/png;base64,{{ invoice.qr_image }}">{% endif %}
+{% if invoice.qpay_short_url %}<p><a href="{{ invoice.qpay_short_url }}" rel="noopener noreferrer">QPay-ээр төлөх</a></p>{% endif %}
+{% if invoice.urls %}<h2>Банкны апп</h2><ul>{% for url in invoice.urls %}<li><a href="{{ url.link }}" rel="noopener noreferrer">{{ url.name }}</a></li>{% endfor %}</ul>{% endif %}
+<p>Төлбөрийн дугаар: {{ invoice.invoice_id }}</p>
+<button id="check" type="button">Төлбөр шалгах</button><p id="status">Төлбөрийн төлөвийг шалгана уу.</p>
+<script>
+document.getElementById('check').addEventListener('click', async () => {
+ const out = document.getElementById('status'); out.textContent = 'Шалгаж байна…';
+ try { const r = await fetch('/billing/check/{{ invoice.invoice_id }}'); const d = await r.json();
+ out.textContent = d.status === 'paid' ? 'Төлбөр баталгаажсан.' : d.status === 'pending' ? 'Төлбөр хараахан баталгаажаагүй байна.' : (d.message || d.error || 'Төлөв шалгах боломжгүй.');
+ } catch (_) { out.textContent = 'Төлөв шалгах боломжгүй. Дахин оролдоно уу.'; }
+});
+</script>
+{% endif %}
+<p><a href="/audit">Шалгалт руу буцах</a></p></div></body></html>
