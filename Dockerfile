@@ -27,4 +27,4 @@ EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:10000/health')" || exit 1
 
-CMD ["python", "run.py"]
+CMD ["sh", "-c", "gunicorn --workers 1 --threads 4 --timeout 60 --bind 0.0.0.0:${PORT:-10000} bot.app:app"]
