@@ -115,7 +115,7 @@ def create_invoice(amount: int, description: str, *, user_id: str | None = None,
         "status": "pending",
         "qr_image": result.get("qr_image"),
         "qr_text": result.get("qr_text"),
-        "qPay短Url": result.get("qPay_shortUrl"),
+        "qpay_short_url": result.get("qPay_shortUrl"),
         "urls": result.get("urls", []),
     }
 
