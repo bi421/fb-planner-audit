@@ -12,7 +12,7 @@ from core.config import get
 from core.audit import perform_user_audit
 from core.brain.routes import brain_bp
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, session
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,58 @@ def webhook() -> Any:
             elif "postback" in event:
                 handle_postback(sender_id, event["postback"]["payload"])
     return "OK", 200
+
+
+@app.route("/audit", methods=["GET", "POST"])
+def web_audit() -> Any:
+    """Simple web audit and quota paywall."""
+    from core.audit import audit_creative
+    from core.precheck import check_quota_and_scan
+
+    if not session.get("audit_user_id"):
+        session["audit_user_id"] = "web:" + uuid.uuid4().hex
+    report = None
+    error = None
+    copy_text = ""
+    if request.method == "POST":
+        copy_text = (request.form.get("copy") or "")[:10000]
+        if not copy_text.strip():
+            error = "Зарын текстээ оруулна уу."
+        else:
+            try:
+                result = check_quota_and_scan(session["audit_user_id"], copy_text)
+                if result.get("status") == "paid_required":
+                    error = "Үнэгүй 5 шалгалтын эрх дууссан. Төлбөрийн багцаа сонгоно уу."
+                else:
+                    report = audit_creative(copy_text)
+            except Exception:
+                logger.exception("Web audit failed")
+                error = "Шалгалт түр амжилтгүй боллоо. Дахин оролдоно уу."
+    return render_template("audit.html", report=report, error=error, copy_text=copy_text)
+
+
+@app.route("/v1/audit", methods=["POST"])
+def api_audit() -> Any:
+    """JSON audit endpoint for the web app and future extension."""
+    from core.audit import audit_creative
+    from core.precheck import check_quota_and_scan
+
+    payload = request.get_json(silent=True) or {}
+    text = str(payload.get("text") or "")[:10000]
+    if not text.strip():
+        return jsonify({"error": "text_required"}), 400
+    user_id = str(payload.get("user_id") or session.get("audit_user_id") or "")
+    if not user_id:
+        session["audit_user_id"] = "web:" + uuid.uuid4().hex
+        user_id = session["audit_user_id"]
+    try:
+        result = check_quota_and_scan(user_id, text)
+        if result.get("status") == "paid_required":
+            return jsonify({"error": "quota_exceeded", "message": result["message"]}), 402
+        return jsonify(audit_creative(text))
+    except Exception:
+        logger.exception("API audit failed")
+        return jsonify({"error": "audit_unavailable"}), 503
 
 
 @app.route("/health", methods=["GET"])
