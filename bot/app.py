@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import logging
+import uuid
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -37,6 +38,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)  # noqa: E402
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.urandom(32)
 app.config["JSON_AS_ASCII"] = False
 
 # Optional CORS support (useful when calling /brain/* from other domains).
@@ -176,5 +178,8 @@ def _daily_audit_job() -> None:
         logger.debug("Scheduler job failed: %s", exc)
 
 
-init_db()
+try:
+    init_db()
+except Exception:
+    logger.exception("Supabase unavailable at startup; database-backed features will fail closed")
 _start_scheduler()
