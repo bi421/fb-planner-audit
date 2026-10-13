@@ -139,6 +139,98 @@ def api_audit() -> Any:
         return jsonify({"error": "audit_unavailable"}), 503
 
 
+@app.route("/billing/invoice", methods=["POST"])
+def billing_invoice() -> Any:
+    """Create a real QPay invoice for a selected plan."""
+    from core.db import save_invoice
+    from core.qpay import PLANS, create_invoice, QPayError
+
+    if not session.get("audit_user_id"):
+        session["audit_user_id"] = "web:" + uuid.uuid4().hex
+    plan = str(request.form.get("plan") or (request.get_json(silent=True) or {}).get("plan") or "")
+    if plan not in PLANS:
+        return jsonify({"error": "invalid_plan", "plans": PLANS}), 400
+    details = PLANS[plan]
+    try:
+        invoice = create_invoice(details["amount"], f"FB Planner Audit - {plan}", user_id=session["audit_user_id"], plan=plan)
+        save_invoice(session["audit_user_id"], invoice["invoice_id"], details["amount"], plan)
+        if request.is_json:
+            return jsonify(invoice), 201
+        return render_template("payment.html", invoice=invoice, plan=plan, error=None)
+    except (QPayError, RuntimeError):
+        logger.exception("QPay invoice creation failed")
+        if request.is_json:
+            return jsonify({"error": "payment_unavailable", "message": "QPay одоогоор холбогдох боломжгүй байна."}), 503
+        return render_template("payment.html", invoice=None, plan=plan, error="QPay төлбөрийн үйлчилгээ түр боломжгүй байна."), 503
+
+
+@app.route("/billing/check/<invoice_id>", methods=["GET"])
+def billing_check(invoice_id: str) -> Any:
+    """Check an invoice owned by this browser session."""
+    from core.db import get_invoice
+    from core.qpay import check_payment
+    invoice = get_invoice(invoice_id)
+    if not invoice or invoice.get("user_id") != session.get("audit_user_id"):
+        return jsonify({"error": "invoice_not_found"}), 404
+    if invoice.get("status") == "paid":
+        return jsonify({"status": "paid"})
+    try:
+        payment = check_payment(invoice_id)
+        if payment["paid"]:
+            return jsonify({"status": "processing", "message": "Төлбөр баталгаажсан; эрх шинэчлэгдэж байна. Вебхүүк хүлээн авна уу."})
+        return jsonify({"status": "pending"})
+    except Exception:
+        logger.exception("QPay payment check failed")
+        return jsonify({"error": "payment_check_unavailable"}), 503
+
+
+@app.route("/webhook/qpay", methods=["POST"])
+def qpay_webhook() -> Any:
+    """Verify payment against QPay API; never trust callback fields as proof."""
+    from core.db import get_invoice, mark_invoice_paid
+    from core.qpay import PLANS, activate_subscription, check_payment
+
+    payload = request.get_json(silent=True) or {}
+    invoice_id = str(payload.get("invoice_id") or payload.get("object_id") or "")
+    if not invoice_id:
+        return jsonify({"error": "invoice_id_required"}), 400
+    invoice = get_invoice(invoice_id)
+    if not invoice:
+        logger.warning("QPay callback for unknown invoice")
+        return jsonify({"error": "unknown_invoice"}), 404
+    if invoice.get("status") == "paid":
+        return jsonify({"ok": True, "status": "already_paid"})
+    try:
+        payment = check_payment(invoice_id)
+        if not payment.get("paid"):
+            return jsonify({"ok": True, "status": "pending"}), 202
+        paid = mark_invoice_paid(invoice_id)
+        if paid:
+            activate_subscription(paid["user_id"], paid["plan"])
+            _notify_owner_payment(paid)
+        return jsonify({"ok": True, "status": "paid"})
+    except Exception:
+        logger.exception("QPay webhook processing failed")
+        return jsonify({"error": "payment_processing_failed"}), 503
+
+
+def _notify_owner_payment(invoice: dict[str, Any]) -> None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    owner_id = os.getenv("OWNER_TELEGRAM_ID", "")
+    if not token or not owner_id:
+        logger.info("Payment succeeded; owner Telegram alert not configured (invoice=%s)", invoice.get("invoice_id"))
+        return
+    try:
+        import requests
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": owner_id, "text": f"QPay төлбөр баталгаажлаа: {invoice.get('amount')}₮ / {invoice.get('plan')} / user={invoice.get('user_id')}"},
+            timeout=5,
+        ).raise_for_status()
+    except Exception:
+        logger.exception("Owner payment alert failed")
+
+
 @app.route("/health", methods=["GET"])
 def health() -> Any:
     """Health check endpoint for load balancers."""
@@ -146,9 +238,9 @@ def health() -> Any:
 
 
 @app.route("/", methods=["GET"])
-def root() -> str:
-    """Root health endpoint."""
-    return "FB Planner Audit running ✓"
+def root() -> Any:
+    """Render the Mongolian product landing page."""
+    return render_template("landing.html")
 
 
 def _start_scheduler() -> None:
