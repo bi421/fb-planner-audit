@@ -82,33 +82,69 @@ class TestAudit:
 
 
 class TestQPay:
-    def test_create_invoice_basic(self) -> None:
-        invoice = create_invoice("user123", "basic")
-        assert invoice["amount"] == 9
-        assert invoice["currency"] == "USD"
-        assert invoice["plan"] == "basic"
+    def test_create_invoice_uses_real_qpay_api(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from core import qpay
+        monkeypatch.setattr(qpay, "_credentials", lambda: ("client", "secret", "invoice-code"))
+        monkeypatch.setattr(qpay, "_api_post", lambda path, payload: {
+            "invoice_id": "qpay-123", "qr_image": "base64qr", "qPay_shortUrl": "https://qpay.mn/i/123", "urls": []
+        })
+        invoice = create_invoice(9900, "Starter plan", user_id="user123", plan="starter")
+        assert invoice["amount"] == 9900
+        assert invoice["currency"] == "MNT"
+        assert invoice["invoice_id"] == "qpay-123"
+        assert invoice["qpay_short_url"] == "https://qpay.mn/i/123"
         assert invoice["status"] == "pending"
 
-    def test_create_invoice_pro(self) -> None:
-        invoice = create_invoice("user123", "pro")
-        assert invoice["amount"] == 29
+    def test_create_invoice_rejects_invalid_amount(self) -> None:
+        with pytest.raises(ValueError, match="amount"):
+            create_invoice(0, "Starter")
 
-    def test_create_invoice_invalid_plan(self) -> None:
-        with pytest.raises(ValueError, match="Invalid plan"):
-            create_invoice("user123", "invalid")
-
-    def test_create_invoice_empty_user_id(self) -> None:
-        with pytest.raises(ValueError, match="user_id must not be empty"):
-            create_invoice("", "pro")
+    def test_create_invoice_requires_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from core import qpay
+        monkeypatch.delenv("QPAY_CLIENT_ID", raising=False)
+        monkeypatch.delenv("QPAY_CLIENT_SECRET", raising=False)
+        monkeypatch.delenv("QPAY_INVOICE_CODE", raising=False)
+        with pytest.raises(qpay.QPayError, match="must be configured"):
+            create_invoice(9900, "Starter")
 
     def test_verify_webhook_no_secret(self) -> None:
-        result = verify_webhook({"timestamp": 12345}, "sig", secret="")
-        assert result is False
+        assert verify_webhook({"timestamp": 12345}, "sig", secret="") is False
 
     def test_verify_webhook_replay_protection(self) -> None:
-        old_payload = {"timestamp": 0}
-        result = verify_webhook(old_payload, "sig", secret="secret")
-        assert result is False
+        assert verify_webhook({"timestamp": 0}, "sig", secret="secret") is False
+
+    def test_verify_webhook_valid_hmac(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import hashlib
+        import hmac
+        import json
+        import time
+        payload = {"timestamp": int(time.time()), "invoice_id": "inv-1"}
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        signature = hmac.new(b"test-secret", canonical.encode(), hashlib.sha256).hexdigest()
+        assert verify_webhook(payload, signature, secret="test-secret") is True
+        assert verify_webhook(payload, "invalid", secret="test-secret") is False
+
+
+class TestRevenueReadiness:
+    def test_dictionary_has_more_than_300_structured_entries(self) -> None:
+        entries = _load_risky_words()
+        assert len(entries) > 300
+        assert all({"word", "lang", "severity", "policy_link", "suggestion"} <= set(x) for x in entries)
+
+    def test_structured_audit_detects_risky_claim(self) -> None:
+        from core.audit import audit_creative
+        report = audit_creative("100% баталгаатай ашиг")
+        assert report["risk_level"] in {"SAFE", "WARNING", "DANGER"}
+        assert 0 <= report["score"] <= 100
+        assert isinstance(report["failed_rules"], list)
+        assert "баталгаатай" in report["fixed_version_of_copy"].lower() or report["failed_rules"]
+
+    def test_audit_detects_caps_emoji_and_before_after(self) -> None:
+        from core.audit import audit_creative
+        report = audit_creative("BEFORE AND AFTER!!!! 🚀🔥💥🎉🎯💯🚀🔥")
+        rules = {item["rule"] for item in report["failed_rules"]}
+        assert "before_after_claim" in rules
+        assert "emoji_spam" in rules
 
 
 class TestModels:

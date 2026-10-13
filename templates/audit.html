@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="mn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Зарын бодлогын эрсдэлийн шалгалт | FB Planner Audit</title>
+  <meta name="description" content="Facebook зарын бодлогын эрсдэлийг монгол хэлээр урьдчилан шалгаж, эрсдэлтэй хэллэгийн санал авна.">
+  <meta name="keywords" content="facebook зар бодлого, хаяг бандуулах, Meta зар шалгах, Монгол зар">
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:850px;margin:0 auto;padding:24px;color:#172033;background:#f6f8fb}
+    .card{background:#fff;border:1px solid #dbe2ea;border-radius:16px;padding:24px;margin:18px 0}
+    textarea{box-sizing:border-box;width:100%;min-height:180px;padding:14px;border:1px solid #aab6c5;border-radius:10px;font:inherit}
+    button{background:#1458c8;color:white;border:0;border-radius:10px;padding:12px 20px;font-weight:700;cursor:pointer}
+    .error{color:#a32626}.SAFE{color:#087443}.WARNING{color:#956000}.DANGER{color:#b42318}
+    li{margin:10px 0}.muted{color:#536174;font-size:.92rem}
+  </style>
+</head>
+<body>
+  <h1>Facebook зарын эрсдэлийг 5 секундэд шалга</h1>
+  <p>Монгол хэл дээрх зарын текстээ оруулж, эрсдэлтэй амлалт болон сайжруулах саналыг шалгаарай.</p>
+  <section class="card">
+    <form method="post">
+      <label for="copy"><strong>Зарын текст</strong></label>
+      <textarea id="copy" name="copy" maxlength="10000" required placeholder="Зарын текстээ энд хуулна уу...">{{ copy_text }}</textarea>
+      <p><button type="submit">Эрсдэл шалгах</button></p>
+    </form>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  </section>
+  {% if report %}
+  <section class="card">
+    <h2>Шалгалтын тайлан</h2>
+    <h3 class="{{ report.risk_level }}">{{ report.risk_level }} · {{ report.score }}/100</h3>
+    {% if report.failed_rules %}
+      <ul>{% for rule in report.failed_rules %}
+        <li><strong>{{ rule.matched_text or rule.rule }}</strong> — {{ rule.suggestion }}
+          {% if rule.policy_link %}<a href="{{ rule.policy_link }}" rel="noopener noreferrer">Бодлогын эх сурвалж</a>{% endif %}
+        </li>
+      {% endfor %}</ul>
+    {% else %}
+      <p>Энэ урьдчилсан шалгалтаар эрсдэлийн дохио илрээгүй.</p>
+    {% endif %}
+    <h3>Сайжруулсан хувилбар</h3>
+    <p>{{ report.fixed_version_of_copy }}</p>
+    <p class="muted">{{ report.disclaimer }}</p>
+  </section>
+  {% endif %}
+  <section class="card">
+    <h2>Багцууд</h2>
+    <p><strong>Үнэгүй</strong> — 5 шалгалт</p>
+    <p><strong>Starter — 9,900₮</strong> — 50 шалгалт / 30 хоног</p>
+    <p><strong>Agency — 49,900₮</strong> — 500 шалгалт / 30 хоног</p>
+    <form method="post" action="/billing/invoice"><input type="hidden" name="plan" value="starter"><button type="submit">Starter авах · 9,900₮</button></form><form method="post" action="/billing/invoice"><input type="hidden" name="plan" value="agency"><button type="submit">Agency авах · 49,900₮</button></form><p class="muted">QPay checkout нь серверийн merchant тохиргоо шаарддаг.</p>
+  </section>
+  <p class="muted">Энэ хэрэгсэл нь урьдчилсан шалгалт бөгөөд Meta-ийн зар зөвшөөрөх, аккаунтыг хамгаалах баталгаа биш.</p>
+</body>
+</html>

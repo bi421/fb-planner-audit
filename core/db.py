@@ -1,172 +1,180 @@
-"""SQLite database layer for fb-planner-audit."""
+"""Supabase Postgres persistence for fb-planner-audit.
+
+Set SUPABASE_URL and SUPABASE_KEY (server-side service-role key) in Render.
+Apply supabase/schema.sql in the Supabase SQL Editor before deploying.
+"""
 from __future__ import annotations
 
-import os
-import sqlite3
+import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Generator, Optional
 
-from core.config import get
+from supabase import Client, create_client
 
 logger = logging.getLogger(__name__)
-
-DB_PATH: str = get("storage.db_path", "data/app.db")
-_ALLOWED_TABLES = frozenset({"users", "audits", "subscriptions", "usage"})
-_DEFAULT_TIMEOUT = 30
+_client: Client | None = None
 
 
-def _db_path() -> str:
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_dir, DB_PATH)
-
-
-def _conn() -> sqlite3.Connection:
-    """Return a connection with row factory."""
-    os.makedirs(os.path.dirname(_db_path()), exist_ok=True)
-    con = sqlite3.connect(_db_path(), timeout=_DEFAULT_TIMEOUT)
-    con.row_factory = sqlite3.Row
-    return con
-
-
-def _get_connection() -> Generator[sqlite3.Connection, None, None]:
-    """Context manager for database connections."""
-    con = _conn()
-    try:
-        yield con
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
+def _conn() -> Client:
+    """Return a cached Supabase client; fail closed when not configured."""
+    global _client
+    if _client is not None:
+        return _client
+    url = os.getenv("SUPABASE_URL", "").strip()
+    key = os.getenv("SUPABASE_KEY", "").strip()
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be configured; SQLite fallback is disabled")
+    _client = create_client(url, key)
+    return _client
 
 
 def init_db() -> None:
-    """Create tables if they do not exist."""
-    schema = """
-    CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        page_id TEXT,
-        page_name TEXT,
-        page_token TEXT,
-        last_audit_at TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS audits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        url TEXT,
-        risk_score INTEGER,
-        issues_json TEXT,
-        pdf_url TEXT,
-        checked_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users (id)
-    );
-    CREATE TABLE IF NOT EXISTS subscriptions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        is_pro INTEGER DEFAULT 0,
-        plan TEXT,
-        started_at TEXT,
-        expires_at TEXT,
-        FOREIGN KEY (user_id) REFERENCES users (id)
-    );
-    CREATE TABLE IF NOT EXISTS usage (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        plan TEXT,
-        action TEXT,
-        usage_type TEXT,
-        meta_json TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
-    );
-    """
-    with _conn() as con:
-        con.executescript(schema)
-    logger.info("Database initialised at %s", _db_path())
+    """Verify database configuration. Schema is provisioned via supabase/schema.sql."""
+    client = _conn()
+    client.table("users").select("psid").limit(1).execute()
+    logger.info("Supabase Postgres connection verified")
+
+
+def _user_compat(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    out = dict(row)
+    out.setdefault("id", out.get("psid"))
+    return out
 
 
 def get_user(psid: str) -> Optional[Dict[str, Any]]:
-    """Return user row dict or None."""
-    with _conn() as con:
-        row = con.execute("SELECT * FROM users WHERE id = ?", (psid,)).fetchone()
-        return dict(row) if row else None
+    if not psid:
+        return None
+    rows = _conn().table("users").select("*").eq("psid", psid).limit(1).execute().data
+    return _user_compat(rows[0] if rows else None)
 
 
 def upsert_user(psid: str, **kwargs: Any) -> None:
-    """Insert or update a user record."""
     if not psid:
         raise ValueError("psid must not be empty")
-    allowed = {"page_id", "page_name", "page_token", "last_audit_at"}
-    for k in kwargs:
-        if k not in allowed:
-            raise ValueError(f"Invalid user field: {k}")
-
-    user = get_user(psid)
-    if user is None:
-        cols = ["id"] + list(kwargs.keys())
-        vals: list[Any] = [psid] + list(kwargs.values())
-        placeholders = ",".join("?" for _ in cols)
-        sql = f"INSERT INTO users ({','.join(cols)}) VALUES ({placeholders})"
-    else:
-        sets = ",".join(f"{k} = ?" for k in kwargs.keys())
-        sql = f"UPDATE users SET {sets} WHERE id = ?"
-        vals = list(kwargs.values()) + [psid]
-    with _conn() as con:
-        con.execute(sql, vals)
-    logger.debug("User %s upserted", psid)
+    allowed = {"page_id", "page_name", "page_token", "last_audit_at", "tier", "quota_used", "quota_limit", "expires_at"}
+    unknown = set(kwargs) - allowed
+    if unknown:
+        raise ValueError(f"Invalid user field(s): {', '.join(sorted(unknown))}")
+    payload = {"psid": psid, **kwargs}
+    _conn().table("users").upsert(payload, on_conflict="psid").execute()
 
 
 def save_audit(user_id: str, **kwargs: Any) -> int:
-    """Insert an audit row and return the new id."""
     if not user_id:
         raise ValueError("user_id must not be empty")
-    allowed = {"url", "risk_score", "issues_json", "pdf_url"}
-    for k in kwargs:
-        if k not in allowed:
-            raise ValueError(f"Invalid audit field: {k}")
-
-    cols = ["user_id"] + list(kwargs.keys())
-    vals: list[Any] = [user_id] + list(kwargs.values())
-    placeholders = ",".join("?" for _ in cols)
-    sql = f"INSERT INTO audits ({','.join(cols)}) VALUES ({placeholders})"
-    with _conn() as con:
-        cur = con.execute(sql, vals)
-        return cur.lastrowid
+    allowed = {"url", "risk_score", "issues_json", "pdf_url", "input_text", "risky_words_found"}
+    unknown = set(kwargs) - allowed
+    if unknown:
+        raise ValueError(f"Invalid audit field(s): {', '.join(sorted(unknown))}")
+    if not get_user(user_id):
+        upsert_user(user_id)
+    issues = kwargs.get("risky_words_found")
+    if issues is None:
+        raw = kwargs.get("issues_json", "[]")
+        try:
+            issues = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            issues = [{"message": str(raw)}]
+    result = _conn().table("scans").insert({
+        "user_id": user_id,
+        "input_text": str(kwargs.get("input_text") or kwargs.get("url") or "")[:10000],
+        "risky_words_found": issues if isinstance(issues, (list, dict)) else [str(issues)],
+    }).execute()
+    return int(result.data[0]["id"]) if result.data else 0
 
 
 def get_user_subscription(psid: str) -> Optional[Dict[str, Any]]:
-    """Return subscription row or None."""
-    with _conn() as con:
-        row = con.execute(
-            "SELECT * FROM subscriptions WHERE user_id = ? ORDER BY id DESC LIMIT 1",
-            (psid,),
-        ).fetchone()
-        return dict(row) if row else None
+    user = get_user(psid)
+    if not user:
+        return None
+    return {
+        "user_id": psid,
+        "plan": user.get("tier", "free"),
+        "is_pro": user.get("tier", "free") != "free",
+        "expires_at": user.get("expires_at"),
+    }
 
 
 def set_pro(psid: str, plan: str, days: int) -> None:
-    """Activate a pro subscription for the given user."""
-    if not psid or not plan:
-        raise ValueError("psid and plan must not be empty")
+    if not psid or plan not in {"starter", "agency"}:
+        raise ValueError("psid and supported plan (starter/agency) are required")
     if days <= 0:
         raise ValueError("days must be positive")
+    limits = {"starter": 50, "agency": 500}
+    expires = datetime.now(timezone.utc) + timedelta(days=days)
+    upsert_user(psid, tier=plan, quota_used=0, quota_limit=limits[plan], expires_at=expires.isoformat())
+    logger.info("Subscription activated for %s, plan=%s, expires=%s", psid, plan, expires.isoformat())
 
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(days=days)
-    with _conn() as con:
-        con.execute(
-            "INSERT INTO subscriptions (user_id, is_pro, plan, started_at, expires_at) "
-            "VALUES (?, 1, ?, ?, ?)",
-            (psid, plan, now.isoformat(), expires.isoformat()),
-        )
-    logger.info("PRO activated for %s, plan=%s, expires=%s", psid, plan, expires.isoformat())
+
+def get_user_quota(user_id: str) -> int:
+    user = get_user(user_id)
+    if not user:
+        upsert_user(user_id)
+        return 5
+    expires = user.get("expires_at")
+    tier = user.get("tier", "free")
+    if tier != "free" and expires:
+        try:
+            dt = datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) < dt:
+                return max(0, int(user.get("quota_limit", 0)) - int(user.get("quota_used", 0)))
+        except (TypeError, ValueError):
+            logger.warning("Invalid subscription expiry for user %s", user_id)
+    used = int(user.get("quota_used", 0) or 0)
+    return max(0, 5 - used)
+
+
+def record_scan(user_id: str, input_text: str, findings: list[dict[str, Any]] | list[str]) -> None:
+    user = get_user(user_id)
+    if not user:
+        upsert_user(user_id)
+        user = get_user(user_id) or {"quota_used": 0, "tier": "free"}
+    quota = get_user_quota(user_id)
+    if quota <= 0:
+        raise PermissionError("Scan quota exceeded")
+    _conn().table("scans").insert({
+        "user_id": user_id,
+        "input_text": (input_text or "")[:10000],
+        "risky_words_found": findings,
+    }).execute()
+    _conn().table("users").update({"quota_used": int(user.get("quota_used", 0) or 0) + 1}).eq("psid", user_id).execute()
 
 
 def iter_users() -> Generator[Dict[str, Any], None, None]:
-    """Yield all users for background jobs."""
-    with _conn() as con:
-        rows = con.execute("SELECT * FROM users").fetchall()
-        for row in rows:
-            yield dict(row)
+    response = _conn().table("users").select("*").execute()
+    for row in response.data or []:
+        yield _user_compat(row) or {}
+
+
+def save_invoice(user_id: str, invoice_id: str, amount: int, plan: str) -> None:
+    if not user_id or not invoice_id or plan not in {"starter", "agency"} or amount <= 0:
+        raise ValueError("Valid user, invoice, amount and plan are required")
+    if not get_user(user_id):
+        upsert_user(user_id)
+    _conn().table("invoices").upsert({
+        "user_id": user_id, "invoice_id": invoice_id, "amount": int(amount),
+        "plan": plan, "status": "pending",
+    }, on_conflict="invoice_id").execute()
+
+
+def get_invoice(invoice_id: str) -> Optional[Dict[str, Any]]:
+    if not invoice_id:
+        return None
+    rows = _conn().table("invoices").select("*").eq("invoice_id", invoice_id).limit(1).execute().data
+    return dict(rows[0]) if rows else None
+
+
+def mark_invoice_paid(invoice_id: str) -> Optional[Dict[str, Any]]:
+    invoice = get_invoice(invoice_id)
+    if not invoice:
+        return None
+    if invoice.get("status") == "paid":
+        return invoice
+    _conn().table("invoices").update({
+        "status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()
+    }).eq("invoice_id", invoice_id).eq("status", "pending").execute()
+    return get_invoice(invoice_id)
