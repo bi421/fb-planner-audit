@@ -5,6 +5,9 @@ import os
 import sys
 import logging
 import uuid
+import time
+import threading
+from collections import defaultdict, deque
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -51,6 +54,27 @@ except ImportError:  # pragma: no cover
 
 app.register_blueprint(brain_bp)
 
+
+
+# Single-worker, process-local rate limit. Render/Gunicorn is configured for one worker.
+_rate_lock = threading.Lock()
+_rate_events: dict[str, deque[float]] = defaultdict(deque)
+
+
+@app.before_request
+def enforce_audit_rate_limit() -> Any:
+    if request.endpoint not in {"web_audit", "api_audit"}:
+        return None
+    identity = str(session.get("audit_user_id") or request.remote_addr or "anonymous")
+    now = time.monotonic()
+    with _rate_lock:
+        events = _rate_events[identity]
+        while events and now - events[0] >= 60:
+            events.popleft()
+        if len(events) >= 10:
+            return jsonify({"error": "rate_limited", "message": "Нэг хэрэглэгч минутанд 10 шалгалт хийх боломжтой."}), 429
+        events.append(now)
+    return None
 
 
 VERIFY_TOKEN: str = get("fb.verify_token", "fbplanneraudit_verify")
