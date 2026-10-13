@@ -125,7 +125,7 @@ def api_audit() -> Any:
     text = str(payload.get("text") or "")[:10000]
     if not text.strip():
         return jsonify({"error": "text_required"}), 400
-    user_id = str(payload.get("user_id") or session.get("audit_user_id") or "")
+    user_id = str(session.get("audit_user_id") or "")
     if not user_id:
         session["audit_user_id"] = "web:" + uuid.uuid4().hex
         user_id = session["audit_user_id"]
