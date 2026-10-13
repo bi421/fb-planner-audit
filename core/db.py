@@ -148,3 +148,33 @@ def iter_users() -> Generator[Dict[str, Any], None, None]:
     response = _conn().table("users").select("*").execute()
     for row in response.data or []:
         yield _user_compat(row) or {}
+
+
+def save_invoice(user_id: str, invoice_id: str, amount: int, plan: str) -> None:
+    if not user_id or not invoice_id or plan not in {"starter", "agency"} or amount <= 0:
+        raise ValueError("Valid user, invoice, amount and plan are required")
+    if not get_user(user_id):
+        upsert_user(user_id)
+    _conn().table("invoices").upsert({
+        "user_id": user_id, "invoice_id": invoice_id, "amount": int(amount),
+        "plan": plan, "status": "pending",
+    }, on_conflict="invoice_id").execute()
+
+
+def get_invoice(invoice_id: str) -> Optional[Dict[str, Any]]:
+    if not invoice_id:
+        return None
+    rows = _conn().table("invoices").select("*").eq("invoice_id", invoice_id).limit(1).execute().data
+    return dict(rows[0]) if rows else None
+
+
+def mark_invoice_paid(invoice_id: str) -> Optional[Dict[str, Any]]:
+    invoice = get_invoice(invoice_id)
+    if not invoice:
+        return None
+    if invoice.get("status") == "paid":
+        return invoice
+    _conn().table("invoices").update({
+        "status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()
+    }).eq("invoice_id", invoice_id).eq("status", "pending").execute()
+    return get_invoice(invoice_id)
