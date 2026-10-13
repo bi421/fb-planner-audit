@@ -139,3 +139,26 @@ def activate_subscription(user_id: str, plan: str, days: int = 30) -> dict[str, 
     from core.db import set_pro
     set_pro(user_id, plan, days)
     return {"status": "activated", "plan": plan, "quota_limit": PLANS[plan]["quota_limit"]}
+
+
+def verify_webhook(payload: dict[str, Any], signature: str, secret: str | None = None) -> bool:
+    """Verify timestamped HMAC callbacks when a shared webhook secret is configured.
+
+    QPay payment status must still be checked against QPay's API before activation.
+    """
+    import hashlib
+    import hmac
+    import json
+
+    secret = secret or os.getenv("QPAY_WEBHOOK_SECRET", "")
+    if not secret or not signature or not isinstance(payload, dict):
+        return False
+    try:
+        timestamp = int(payload.get("timestamp", 0))
+        if abs(time.time() - timestamp) > 300:
+            return False
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        expected = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+    except (TypeError, ValueError, OverflowError):
+        return False
